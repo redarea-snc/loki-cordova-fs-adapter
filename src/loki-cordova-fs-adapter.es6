@@ -13,15 +13,26 @@ class LokiCordovaFSAdapter {
             (fileEntry) => {
                 fileEntry.createWriter(
                     (fileWriter) => {
-                        fileWriter.onwriteend = () => {
-                            if (fileWriter.length === 0) {
-                                var blob = this._createBlob(dbstring, "text/plain");
-                                fileWriter.write(blob);
-                                callback();
+                        // Handle write error
+                        fileWriter.onwrite = () => {
+                            if (fileWriter.length > 0) {
+                                console.error(TAG, "error writing file, LENGHT: " + fileWriter.length);
+                                throw new LokiCordovaFSAdapterError("Unable to truncate file, LENGHT: " + fileWriter.length);
                             }
-                        };
-                        fileWriter.truncate(0);
 
+                            // Callback finale - così è dichiarata correttamente
+                            fileWriter.onwrite = () => {
+                                callback();
+                            };
+
+                            var blob = this._createBlob(dbstring, "text/plain");
+                            fileWriter.write(blob);
+                        };
+
+                        fileWriter.onerror = (err) => {
+                            console.error(TAG, "error writing file", err, fileWriter.err);
+                            throw new LokiCordovaFSAdapterError("Unable to write file" + JSON.stringify(err) + ' - internal error: ' + JSON.stringify(fileWriter.error));
+                        };
                     },
                     (err) => {
                         console.error(TAG, "error writing file", err);
