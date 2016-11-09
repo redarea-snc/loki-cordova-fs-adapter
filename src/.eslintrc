@@ -15,13 +15,13 @@
     "templateStrings": 1,
     "destructuring": 1,
     "modules": 1,
-    "forOf": 1,
+    "forOf": 1
   },
   "rules": {
     "global-strict": 0,
     "no-console": 0,
     "comma-dangle": 0,
     "no-underscore-dangle": 0,
-    "camelcase": 0,
+    "camelcase": 0
   }
 }

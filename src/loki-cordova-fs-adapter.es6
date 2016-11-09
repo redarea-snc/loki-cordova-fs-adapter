@@ -5,10 +5,29 @@ const TAG = "[LokiCordovaFSAdapter]";
 class LokiCordovaFSAdapter {
     constructor(options) {
         this.options = options;
+        this.queuesRunning = new Array();
+        this.saveDbQueue = {};
     }
 
-    saveDatabase(dbname, dbstring, callback) {
-        console.log(TAG, "saving database");
+    runDbQueue(dbname){
+        if(!this.saveDbQueue.hasOwnProperty(dbname)){
+            this.stopDbQueue(dbname);
+            return;
+        }
+
+        // Lancia la coda solo se ci sono salvataggi da effettuare
+        var dbQueue = this.saveDbQueue[dbname];
+        if(dbQueue.length < 1){
+            this.stopDbQueue(dbname);
+            return;
+        }
+
+        // Salvataggio del primo elemento in lista (coda fifo)
+        var saveData = this.saveDbQueue[dbname].splice(0, 1);
+        saveData = saveData[0];
+
+        var adapterRef = this;
+
         this._getFile(dbname,
             (fileEntry) => {
                 fileEntry.createWriter(
@@ -17,34 +36,64 @@ class LokiCordovaFSAdapter {
                         fileWriter.onwrite = () => {
                             if (fileWriter.length > 0) {
                                 console.error(TAG, "error writing file, LENGHT: " + fileWriter.length);
-                                throw new LokiCordovaFSAdapterError("Unable to truncate file, LENGHT: " + fileWriter.length);
+                                var saveErr =  new LokiCordovaFSAdapterError("Unable to truncate file, LENGHT: " + fileWriter.length);
+                                saveData.callback(saveErr);
+                                adapterRef.runDbQueue(dbname);
+                                return;
                             }
 
                             // Callback finale - così è dichiarata correttamente
                             fileWriter.onwrite = () => {
-                                callback();
+                                saveData.callback();
+                                adapterRef.runDbQueue(dbname);
                             };
 
-                            var blob = this._createBlob(dbstring, "text/plain");
+                            var blob = this._createBlob(saveData.dbstring, "text/plain");
                             fileWriter.write(blob);
                         };
 
                         fileWriter.onerror = (err) => {
                             console.error(TAG, "error writing file", err, fileWriter.err);
-                            throw new LokiCordovaFSAdapterError("Unable to write file" + JSON.stringify(err) + ' - internal error: ' + JSON.stringify(fileWriter.error));
+                            var saveErr = new LokiCordovaFSAdapterError("Unable to write file" + JSON.stringify(err) + ' - internal error: ' + JSON.stringify(fileWriter.error));
+                            saveData.callback(saveErr);
+                            adapterRef.runDbQueue(dbname);
                         };
+
+                        fileWriter.truncate(0);
                     },
                     (err) => {
                         console.error(TAG, "error writing file", err);
-                        throw new LokiCordovaFSAdapterError("Unable to write file" + JSON.stringify(err));
+                        var saveErr = new LokiCordovaFSAdapterError("Unable to write file" + JSON.stringify(err));
+                        saveData.callback(saveErr);
+                        adapterRef.runDbQueue(dbname);
                     }
                 );
             },
             (err) => {
                 console.error(TAG, "error getting file", err);
-                throw new LokiCordovaFSAdapterError("Unable to get file" + JSON.stringify(err));
+                var saveErr = new LokiCordovaFSAdapterError("Unable to get file" + JSON.stringify(err));
+                saveData.callback(saveErr);
+                adapterRef.runDbQueue(dbname);
             }
         );
+    }
+
+    saveDatabase(dbname, dbstring, callback) {
+        console.log(TAG, "saving database");
+
+        //--Rut - 09/11/2016 - gestione salvataggi con una coda - se ne porta a termine solo uno alla volta per non far
+        // accavallare molte callback concorrenti
+        if(!this.saveDbQueue.hasOwnProperty(dbname)){
+            this.saveDbQueue[dbname] = new Array();
+        }
+
+        this.saveDbQueue[dbname].push({dbstring: dbstring, callback: callback});
+
+        if(this.queuesRunning.indexOf(dbname) < 0){
+            this.queuesRunning.push(dbname);
+            this.runDbQueue(dbname);
+        }
+
     }
 
     loadDatabase(dbname, callback) {
@@ -106,6 +155,13 @@ class LokiCordovaFSAdapter {
                 );
             }
         );
+    }
+
+    stopDbQueue(dbname){
+        var dbQueueIndex = this.queuesRunning.indexOf(dbname);
+        if(dbQueueIndex > -1){
+            this.queuesRunning.splice(dbQueueIndex, 1);
+        }
     }
 
     _getFile(name, handleSuccess, handleError) {
